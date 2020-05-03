@@ -40,7 +40,10 @@ namespace Microsoft.AspNetCore.Mvc.Formatters
             if (jsonSerializerOptions.Encoder is null)
             {
                 // If the user hasn't explicitly configured the encoder, use the less strict encoder that does not encode all non-ASCII characters.
-                jsonSerializerOptions = jsonSerializerOptions.Copy(JavaScriptEncoder.UnsafeRelaxedJsonEscaping);
+                jsonSerializerOptions = new JsonSerializerOptions(jsonSerializerOptions)
+                {
+                    Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+                };
             }
 
             return new SystemTextJsonOutputFormatter(jsonSerializerOptions);
@@ -77,7 +80,7 @@ namespace Microsoft.AspNetCore.Mvc.Formatters
                 // For polymorphic scenarios where the user declares a return type, but returns a derived type,
                 // we want to serialize all the properties on the derived type. This keeps parity with
                 // the behavior you get when the user does not declare the return type and with Json.Net at least at the top level.
-                var objectType = context.Object?.GetType() ?? context.ObjectType;
+                var objectType = context.Object?.GetType() ?? context.ObjectType ?? typeof(object);
                 await JsonSerializer.SerializeAsync(writeStream, context.Object, objectType, SerializerOptions);
 
                 // The transcoding streams use Encoders and Decoders that have internal buffers. We need to flush these

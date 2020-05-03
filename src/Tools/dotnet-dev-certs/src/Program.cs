@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -24,11 +25,22 @@ namespace Microsoft.AspNetCore.DeveloperCertificates.Tools
         private const int ErrorNoValidCertificateFound = 6;
         private const int ErrorCertificateNotTrusted = 7;
         private const int ErrorCleaningUpCertificates = 8;
+        private const int InvalidCertificateState = 9;
 
         public static readonly TimeSpan HttpsCertificateValidity = TimeSpan.FromDays(365);
 
         public static int Main(string[] args)
         {
+            if (args.Contains("--debug"))
+            {
+                // This is so that we can attach `dotnet trace` for debug purposes.
+                Console.WriteLine("Press any key to continue...");
+                _ = Console.ReadKey();
+                var newArgs = new List<string>(args);
+                newArgs.Remove("--debug");
+                args = newArgs.ToArray();
+            }
+
             try
             {
                 var app = new CommandLineApplication
@@ -119,7 +131,7 @@ namespace Microsoft.AspNetCore.DeveloperCertificates.Tools
 
         private static int CleanHttpsCertificates(IReporter reporter)
         {
-            var manager = new CertificateManager();
+            var manager = CertificateManager.Instance;
             try
             {
                 if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -137,7 +149,7 @@ namespace Microsoft.AspNetCore.DeveloperCertificates.Tools
                 reporter.Output("HTTPS development certificates successfully removed from the machine.");
                 return Success;
             }
-            catch(Exception e)
+            catch (Exception e)
             {
                 reporter.Error("There was an error trying to clean HTTPS development certificates on this machine.");
                 reporter.Error(e.Message);
@@ -149,8 +161,8 @@ namespace Microsoft.AspNetCore.DeveloperCertificates.Tools
         private static int CheckHttpsCertificate(CommandOption trust, IReporter reporter)
         {
             var now = DateTimeOffset.Now;
-            var certificateManager = new CertificateManager();
-            var certificates = CertificateManager.ListCertificates(CertificatePurpose.HTTPS, StoreName.My, StoreLocation.CurrentUser, isValid: true);
+            var certificateManager = CertificateManager.Instance;
+            var certificates = certificateManager.ListCertificates(StoreName.My, StoreLocation.CurrentUser, isValid: true);
             if (certificates.Count == 0)
             {
                 reporter.Output("No valid certificate found.");
@@ -158,13 +170,25 @@ namespace Microsoft.AspNetCore.DeveloperCertificates.Tools
             }
             else
             {
-                reporter.Output("A valid certificate was found.");
+                foreach (var certificate in certificates)
+                {
+                    // We never want check to require interaction.
+                    // When IDEs run dotnet dev-certs https after calling --check, we will try to access the key and
+                    // that will trigger a prompt if necessary.
+                    var status = certificateManager.CheckCertificateState(certificate, interactive: false);
+                    if (!status.Result)
+                    {
+                        reporter.Warn(status.Message);
+                        return InvalidCertificateState;
+                    }
+                }
+                reporter.Verbose("A valid certificate was found.");
             }
 
             if (trust != null && trust.HasValue())
             {
                 var store = RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? StoreName.My : StoreName.Root;
-                var trustedCertificates = CertificateManager.ListCertificates(CertificatePurpose.HTTPS, store, StoreLocation.CurrentUser, isValid: true);
+                var trustedCertificates = certificateManager.ListCertificates(store, StoreLocation.CurrentUser, isValid: true);
                 if (!certificates.Any(c => certificateManager.IsTrusted(c)))
                 {
                     reporter.Output($@"The following certificates were found, but none of them is trusted:
@@ -183,7 +207,25 @@ namespace Microsoft.AspNetCore.DeveloperCertificates.Tools
         private static int EnsureHttpsCertificate(CommandOption exportPath, CommandOption password, CommandOption trust, IReporter reporter)
         {
             var now = DateTimeOffset.Now;
-            var manager = new CertificateManager();
+            var manager = CertificateManager.Instance;
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                var certificates = manager.ListCertificates(StoreName.My, StoreLocation.CurrentUser, isValid: true, exportPath.HasValue());
+                foreach (var certificate in certificates)
+                {
+                    var status = manager.CheckCertificateState(certificate, interactive: true);
+                    if (!status.Result)
+                    {
+                        reporter.Warn("One or more certificates might be in an invalid state. We will try to access the certificate key " +
+                            "for each certificate and as a result you might be prompted one or more times to enter " +
+                            "your password to access the user keychain. " +
+                            "When that happens, select 'Always Allow' to grant 'dotnet' access to the certificate key in the future.");
+                    }
+
+                    break;
+                }
+            }
 
             if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX) && trust?.HasValue() == true)
             {
@@ -208,9 +250,7 @@ namespace Microsoft.AspNetCore.DeveloperCertificates.Tools
                 password.HasValue(),
                 password.Value());
 
-            reporter.Verbose(string.Join(Environment.NewLine, result.Diagnostics.Messages));
-
-            switch (result.ResultCode)
+            switch (result)
             {
                 case EnsureCertificateResult.Succeeded:
                     reporter.Output("The HTTPS developer certificate was generated successfully.");

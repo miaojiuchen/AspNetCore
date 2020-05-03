@@ -1470,6 +1470,7 @@ namespace Microsoft.AspNetCore.Identity.Test
         /// </summary>
         /// <returns>Task</returns>
         [Fact]
+        [QuarantinedTest]
         public async Task CanVerifyPhoneNumber()
         {
             var manager = CreateManager();
@@ -1636,7 +1637,6 @@ namespace Microsoft.AspNetCore.Identity.Test
         /// </summary>
         /// <returns>Task</returns>
         [Fact]
-        [Flaky("https://github.com/aspnet/AspNetCore-Internal/issues/1766", FlakyOn.All)]
         public async Task EmailFactorFailsAfterSecurityStampChangeTest()
         {
             var manager = CreateManager();

@@ -93,7 +93,15 @@ namespace Microsoft.AspNetCore.WebUtilities
 
                 if (!buffer.IsEmpty)
                 {
-                    ParseFormValues(ref buffer, ref accumulator, readResult.IsCompleted);
+                    try
+                    {
+                        ParseFormValues(ref buffer, ref accumulator, readResult.IsCompleted);
+                    }
+                    catch
+                    {
+                        _pipeReader.AdvanceTo(buffer.Start);
+                        throw;
+                    }
                 }
 
                 if (readResult.IsCompleted)
@@ -121,7 +129,7 @@ namespace Microsoft.AspNetCore.WebUtilities
         {
             if (buffer.IsSingleSegment)
             {
-                ParseFormValuesFast(buffer.First.Span,
+                ParseFormValuesFast(buffer.FirstSpan,
                     ref accumulator,
                     isFinalBlock,
                     out var consumed);
@@ -167,7 +175,7 @@ namespace Microsoft.AspNetCore.WebUtilities
                     // If we're not in the final block, then consume nothing
                     if (!isFinalBlock)
                     {
-                        // Don't buffer indefinately
+                        // Don't buffer indefinitely
                         if ((uint)span.Length > (uint)KeyLengthLimit + (uint)ValueLengthLimit)
                         {
                             ThrowKeyOrValueTooLargeException();
@@ -236,7 +244,7 @@ namespace Microsoft.AspNetCore.WebUtilities
                 {
                     if (!isFinalBlock)
                     {
-                        // Don't buffer indefinately
+                        // Don't buffer indefinitely
                         if ((uint)(sequenceReader.Consumed - consumedBytes) > (uint)KeyLengthLimit + (uint)ValueLengthLimit)
                         {
                             ThrowKeyOrValueTooLargeException();
@@ -318,7 +326,7 @@ namespace Microsoft.AspNetCore.WebUtilities
         {
             if (ros.IsSingleSegment)
             {
-                return GetDecodedString(ros.First.Span);
+                return GetDecodedString(ros.FirstSpan);
             }
 
             if (ros.Length < StackAllocThreshold)
@@ -369,10 +377,17 @@ namespace Microsoft.AspNetCore.WebUtilities
                 // We will also create a string from it by the end of the function.
                 var span = MemoryMarshal.CreateSpan(ref Unsafe.AsRef(readOnlySpan[0]), readOnlySpan.Length);
 
-                var bytes = UrlDecoder.DecodeInPlace(span, isFormEncoding: true);
-                span = span.Slice(0, bytes);
+                try
+                {
+                    var bytes = UrlDecoder.DecodeInPlace(span, isFormEncoding: true);
+                    span = span.Slice(0, bytes);
 
-                return _encoding.GetString(span);
+                    return _encoding.GetString(span);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    throw new InvalidDataException("The form value contains invalid characters.", ex);
+                }
             }
             else
             {

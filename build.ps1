@@ -77,6 +77,12 @@ MSBuild verbosity: q[uiet], m[inimal], n[ormal], d[etailed], and diag[nostic]
 .PARAMETER MSBuildArguments
 Additional MSBuild arguments to be passed through.
 
+.PARAMETER DotNetRuntimeSourceFeed
+Additional feed that can be used when downloading .NET runtimes
+
+.PARAMETER DotNetRuntimeSourceFeedKey
+Key for feed that can be used when downloading .NET runtimes
+
 .EXAMPLE
 Building both native and managed projects.
 
@@ -93,7 +99,7 @@ Running tests.
     build.ps1 -test
 
 .LINK
-Online version: https://github.com/aspnet/AspNetCore/blob/master/docs/BuildFromSource.md
+Online version: https://github.com/dotnet/aspnetcore/blob/master/docs/BuildFromSource.md
 #>
 [CmdletBinding(PositionalBinding = $false, DefaultParameterSetName='Groups')]
 param(
@@ -112,7 +118,7 @@ param(
     [ValidateSet('Debug', 'Release')]
     $Configuration,
 
-    [ValidateSet('x64', 'x86', 'arm')]
+    [ValidateSet('x64', 'x86', 'arm', 'arm64')]
     $Architecture = 'x64',
 
     # A list of projects which should be built.
@@ -152,6 +158,11 @@ param(
     # Other lifecycle targets
     [switch]$Help, # Show help
 
+    # Optional arguments that enable downloading an internal
+    # runtime or runtime from a non-default location
+    [string]$DotNetRuntimeSourceFeed,
+    [string]$DotNetRuntimeSourceFeedKey,
+
     # Capture the rest
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$MSBuildArguments
@@ -174,7 +185,8 @@ if ($DumpProcesses -or $CI) {
 if ($All) {
     $MSBuildArguments += '/p:BuildAllProjects=true'
 }
-elseif ($Projects) {
+
+if ($Projects) {
     if (![System.IO.Path]::IsPathRooted($Projects))
     {
         $Projects = Join-Path (Get-Location) $Projects
@@ -182,7 +194,7 @@ elseif ($Projects) {
     $MSBuildArguments += "/p:ProjectToBuild=$Projects"
 }
 # When adding new sub-group build flags, add them to this check.
-elseif((-not $BuildNative) -and (-not $BuildManaged) -and (-not $BuildNodeJS) -and (-not $BuildInstallers) -and (-not $BuildJava)) {
+elseif (-not ($All -or $BuildNative -or $BuildManaged -or $BuildNodeJS -or $BuildInstallers -or $BuildJava)) {
     Write-Warning "No default group of projects was specified, so building the 'managed' and its dependent subsets of projects. Run ``build.cmd -help`` for more details."
 
     # This goal of this is to pick a sensible default for `build.cmd` with zero arguments.
@@ -192,7 +204,7 @@ elseif((-not $BuildNative) -and (-not $BuildManaged) -and (-not $BuildNodeJS) -a
 }
 
 if ($BuildManaged -or ($All -and (-not $NoBuildManaged))) {
-    if ((-not $BuildNodeJS) -and (-not $NoBuildNodeJS)) {
+    if (-not ($BuildNodeJS -or $NoBuildNodeJS)) {
         $node = Get-Command node -ErrorAction Ignore -CommandType Application
 
         if ($node) {
@@ -250,6 +262,16 @@ if (-not $Configuration) {
     $Configuration = if ($CI) { 'Release' } else { 'Debug' }
 }
 $MSBuildArguments += "/p:Configuration=$Configuration"
+
+[string[]]$ToolsetBuildArguments = @()
+if ($DotNetRuntimeSourceFeed -or $DotNetRuntimeSourceFeedKey) {
+    $runtimeFeedArg = "/p:DotNetRuntimeSourceFeed=$DotNetRuntimeSourceFeed"
+    $runtimeFeedKeyArg = "/p:DotNetRuntimeSourceFeedKey=$DotNetRuntimeSourceFeedKey"
+    $MSBuildArguments += $runtimeFeedArg
+    $MSBuildArguments += $runtimeFeedKeyArg
+    $ToolsetBuildArguments += $runtimeFeedArg
+    $ToolsetBuildArguments += $runtimeFeedKeyArg
+}
 
 $foundJdk = $false
 $javac = Get-Command javac -ErrorAction Ignore -CommandType Application
@@ -315,7 +337,7 @@ $env:MSBUILDDISABLENODEREUSE=1
 
 # Our build often has warnings that we can't fix, like "MSB3026: Could not copy" due to race
 # conditions in building C++
-# Fixing this is tracked by https://github.com/aspnet/AspNetCore-Internal/issues/601
+# Fixing this is tracked by https://github.com/dotnet/aspnetcore-internal/issues/601
 $warnAsError = $false
 
 if ($ForceCoreMsbuild) {
@@ -375,7 +397,8 @@ try {
             /p:Configuration=Release `
             /p:Restore=$RunRestore `
             /p:Build=true `
-            /clp:NoSummary
+            /clp:NoSummary `
+            @ToolsetBuildArguments
     }
 
     MSBuild $toolsetBuildProj `

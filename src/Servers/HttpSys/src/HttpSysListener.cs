@@ -64,7 +64,7 @@ namespace Microsoft.AspNetCore.Server.HttpSys
 
             Options = options;
 
-            Logger = LogHelper.CreateLogger(loggerFactory, typeof(HttpSysListener));
+            Logger = loggerFactory.CreateLogger<HttpSysListener>();
 
             _state = State.Stopped;
             _internalLock = new object();
@@ -92,7 +92,7 @@ namespace Microsoft.AspNetCore.Server.HttpSys
                 _requestQueue?.Dispose();
                 _urlGroup?.Dispose();
                 _serverSession?.Dispose();
-                LogHelper.LogException(Logger, ".Ctor", exception);
+                Logger.LogError(LoggerEventIds.HttpSysListenerCtorError, exception, ".Ctor");
                 throw;
             }
         }
@@ -135,7 +135,7 @@ namespace Microsoft.AspNetCore.Server.HttpSys
         {
             CheckDisposed();
 
-            LogHelper.LogInfo(Logger, "Start");
+            Logger.LogTrace(LoggerEventIds.ListenerStarting, "Starting the listener.");
 
             // Make sure there are no race conditions between Start/Stop/Abort/Close/Dispose.
             // Start needs to setup all resources. Abort/Stop must not interfere while Start is
@@ -177,7 +177,7 @@ namespace Microsoft.AspNetCore.Server.HttpSys
                     // Make sure the HttpListener instance can't be used if Start() failed.
                     _state = State.Disposed;
                     DisposeInternal();
-                    LogHelper.LogException(Logger, "Start", exception);
+                    Logger.LogError(LoggerEventIds.ListenerStartError, exception, "Start");
                     throw;
                 }
             }
@@ -195,6 +195,8 @@ namespace Microsoft.AspNetCore.Server.HttpSys
                         return;
                     }
 
+                    Logger.LogTrace(LoggerEventIds.ListenerStopping,"Stopping the listener.");
+
                     // If this instance created the queue then remove the URL prefixes before shutting down.
                     if (_requestQueue.Created)
                     {
@@ -208,7 +210,7 @@ namespace Microsoft.AspNetCore.Server.HttpSys
             }
             catch (Exception exception)
             {
-                LogHelper.LogException(Logger, "Stop", exception);
+                Logger.LogError(LoggerEventIds.ListenerStopError, exception, "Stop");
                 throw;
             }
         }
@@ -236,14 +238,14 @@ namespace Microsoft.AspNetCore.Server.HttpSys
                     {
                         return;
                     }
-                    LogHelper.LogInfo(Logger, "Dispose");
+                    Logger.LogTrace(LoggerEventIds.ListenerDisposing, "Disposing the listener.");
 
                     Stop();
                     DisposeInternal();
                 }
                 catch (Exception exception)
                 {
-                    LogHelper.LogException(Logger, "Dispose", exception);
+                    Logger.LogError(LoggerEventIds.ListenerDisposeError, exception, "Dispose");
                     throw;
                 }
                 finally
@@ -298,7 +300,7 @@ namespace Microsoft.AspNetCore.Server.HttpSys
             }
             catch (Exception exception)
             {
-                LogHelper.LogException(Logger, "GetContextAsync", exception);
+                Logger.LogError(LoggerEventIds.AcceptError, exception, "AcceptAsync");
                 throw;
             }
 
